@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ride
+      POSTGRES_PASSWORD: ride
+      POSTGRES_DB: ride
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ride -d ride"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://ride:ride@db:5432/ride
+      TEST_DATABASE_URL: postgresql+psycopg2://ride:ride@db:5432/ride_test
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Bot drivers roaming Bangalore (start with: docker compose --profile sim up)
+  sim:
+    build: ./backend
+    profiles: ["sim"]
+    env_file: .env
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      - api
+    volumes:
+      - ./backend:/app
+    command: python -m scripts.sim_drivers
+
+volumes:
+  pgdata:

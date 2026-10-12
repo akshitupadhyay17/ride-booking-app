@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Zip Rides",
+    "slug": "zip-rides",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#070B14",
+    "plugins": [
+      ["expo-location", { "locationWhenInUsePermission": "Zip uses your location to find nearby riders and set your pickup point." }]
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.example.ziprides",
+      "infoPlist": {
+        "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": true }
+      }
+    },
+    "android": {
+      "package": "com.example.ziprides",
+      "adaptiveIcon": {
+        "backgroundColor": "#070B14",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
