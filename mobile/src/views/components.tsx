@@ -1,9 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Animated, Easing, Pressable, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle,
+  ActivityIndicator, Animated, Easing, PanResponder, Pressable, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { colors, font, gradient, radius, shadow } from './theme';
 
@@ -45,18 +46,124 @@ export function Card({ children, style }: { children: React.ReactNode; style?: S
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export function Sheet({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
-  const y = useRef(new Animated.Value(40)).current;
-  const o = useRef(new Animated.Value(0)).current;
+export function Sheet({
+  children,
+  style,
+  collapsible = true,
+  peekHeight = 88,
+  hint = true,
+}: {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  collapsible?: boolean;
+  peekHeight?: number;
+  hint?: boolean;
+}) {
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const translateY = useRef(new Animated.Value(40)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  const isCollapsedRef = useRef(false);
+  const sheetHeightRef = useRef(0);
+
+  isCollapsedRef.current = isCollapsed;
+  sheetHeightRef.current = sheetHeight;
+
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(y, { toValue: 0, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(o, { toValue: 1, duration: 260, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 0, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 260, useNativeDriver: true }),
     ]).start();
   }, []);
+
+  const getMaxTranslate = () => Math.max(120, (sheetHeightRef.current || 420) - peekHeight);
+
+  const snapTo = (toCollapsed: boolean) => {
+    const toVal = toCollapsed ? getMaxTranslate() : 0;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Animated.spring(translateY, {
+      toValue: toVal,
+      tension: 65,
+      friction: 11,
+      useNativeDriver: true,
+    }).start(() => {
+      setIsCollapsed(toCollapsed);
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => collapsible,
+      onMoveShouldSetPanResponder: (_, g) => collapsible && Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        translateY.stopAnimation();
+      },
+      onPanResponderMove: (_, g) => {
+        if (!collapsible) return;
+        const max = getMaxTranslate();
+        const base = isCollapsedRef.current ? max : 0;
+        let next = base + g.dy;
+        if (next < 0) next = next * 0.2;
+        if (next > max + 20) next = max + (next - max) * 0.2;
+        translateY.setValue(next);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (!collapsible) return;
+        const max = getMaxTranslate();
+        const dist = g.dy;
+        const vel = g.vy;
+
+        // Tap toggle (minimal drag movement)
+        if (Math.abs(dist) < 7 && Math.abs(g.dx) < 7) {
+          snapTo(!isCollapsedRef.current);
+          return;
+        }
+
+        // Swipe down -> collapse to see map
+        if (vel > 0.35 || dist > 35) {
+          snapTo(true);
+        } else if (vel < -0.35 || dist < -35) {
+          // Swipe up -> expand to see fares
+          snapTo(false);
+        } else {
+          // Snap based on position
+          const currentPos = (isCollapsedRef.current ? max : 0) + dist;
+          snapTo(currentPos > max * 0.45);
+        }
+      },
+    })
+  ).current;
+
   return (
-    <Animated.View style={[styles.sheet, shadow, { opacity: o, transform: [{ translateY: y }] }, style]}>
-      <View style={styles.grabber} />
+    <Animated.View
+      onLayout={(e) => {
+        const h = e.nativeEvent.layout.height;
+        if (h && Math.abs(h - sheetHeightRef.current) > 2) {
+          setSheetHeight(h);
+          sheetHeightRef.current = h;
+          if (isCollapsedRef.current) {
+            translateY.setValue(Math.max(120, h - peekHeight));
+          }
+        }
+      }}
+      style={[styles.sheet, shadow, { opacity, transform: [{ translateY }] }, style]}
+    >
+      <View {...(collapsible ? panResponder.panHandlers : {})} style={styles.grabberArea}>
+        <View style={styles.grabber} />
+        {collapsible && hint && (
+          <View style={styles.hintRow}>
+            <Ionicons name={isCollapsed ? 'chevron-up' : 'chevron-down'} size={12} color={colors.muted} />
+            <Text style={styles.hintText}>{isCollapsed ? 'Swipe up for fares' : 'Swipe down for map'}</Text>
+          </View>
+        )}
+      </View>
+      {isCollapsed && (
+        <Pressable
+          {...panResponder.panHandlers}
+          onPress={() => snapTo(false)}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: peekHeight + 20, zIndex: 10 }}
+        />
+      )}
       {children}
     </Animated.View>
   );
@@ -213,8 +320,11 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
   iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 16, borderWidth: 1, borderColor: colors.border },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 34, borderTopWidth: 1, borderColor: colors.border },
-  grabber: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 14 },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 34, borderTopWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  grabberArea: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', paddingTop: 4, paddingBottom: 8, minHeight: 34 },
+  grabber: { width: 44, height: 5, borderRadius: 2.5, backgroundColor: colors.faint },
+  hintRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  hintText: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 0.2 },
   input: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: radius.md, paddingHorizontal: 14, height: 54, borderWidth: 1, borderColor: colors.border },
   err: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(248,113,113,0.12)', padding: 10, borderRadius: radius.sm, marginVertical: 6 },
   pin: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },

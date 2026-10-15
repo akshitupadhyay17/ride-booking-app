@@ -123,11 +123,14 @@ function QuoteSheet({ p, s }: SP) {
       ) : q ? (
         <>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
               <Text style={font.h3} numberOfLines={1}>{s.drop?.name}</Text>
               <Text style={font.small}>{km(q.distance_m)} · {mins(q.duration_s)}</Text>
             </View>
-            {q.surge > 1 && <Pill text={`${q.surge}× demand`} color={colors.warn} />}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {chosen && <Pill text={`${chosen.label} ${rupees(chosen.fare_paise)}`} color={colors.cyan} />}
+              {q.surge > 1 && <Pill text={`${q.surge}× demand`} color={colors.warn} />}
+            </View>
           </View>
           <ScrollView style={{ maxHeight: 250 }} showsVerticalScrollIndicator={false}>
             {q.options.map((o) => {
@@ -212,14 +215,21 @@ function ActiveSheet({ p, s }: SP) {
       {d && (
         <Card style={{ marginTop: 14, flexDirection: 'row', alignItems: 'center' }}>
           <Avatar name={d.name} />
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={font.h3}>{d.name}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-              <Ionicons name="star" size={13} color={colors.warn} /><Text style={[font.small, { marginLeft: 4 }]}>{(d.rating ?? 5.0).toFixed(1)}</Text>
-              <Text style={[font.small, { marginLeft: 10 }]}>{d.vehicle_model}</Text>
+          <View style={{ flex: 1, marginLeft: 12, marginRight: 10, justifyContent: 'center' }}>
+            <Text style={font.h3} numberOfLines={1}>{d.name}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+              <Ionicons name="star" size={13} color={colors.warn} />
+              <Text style={[font.small, { marginLeft: 4, fontWeight: '700' }]}>{(d.rating ?? 5.0).toFixed(1)}</Text>
             </View>
           </View>
-          <View style={styles.plate}><Text style={styles.plateText}>{d.vehicle_number}</Text></View>
+          <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+            <Text style={[font.small, { fontWeight: '700', color: colors.text, marginBottom: 4 }]} numberOfLines={1}>
+              {d.vehicle_model}
+            </Text>
+            <View style={styles.plate}>
+              <Text style={styles.plateText}>{d.vehicle_number}</Text>
+            </View>
+          </View>
         </Card>
       )}
       <View style={{ marginTop: 10 }}>
