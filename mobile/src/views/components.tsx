@@ -266,25 +266,135 @@ export function Pulse({ size = 120, children }: { size?: number; children?: Reac
 }
 
 type LL = { latitude: number; longitude: number };
-export function MapCanvas({ center, fit, bottomPad = 320, topPad = 140, children }: {
-  center: { lat: number; lng: number } | null; fit?: LL[]; bottomPad?: number; topPad?: number; children?: React.ReactNode;
+export function MapCanvas({
+  center,
+  fit,
+  fitKey: customFitKey,
+  bottomPad = 320,
+  topPad = 140,
+  showRecenterButton = true,
+  children,
+  onRegionChangeComplete,
+  onPanDrag,
+}: {
+  center: { lat: number; lng: number } | null;
+  fit?: LL[];
+  fitKey?: string;
+  bottomPad?: number;
+  topPad?: number;
+  showRecenterButton?: boolean;
+  children?: React.ReactNode;
+  onRegionChangeComplete?: (region: { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number }) => void;
+  onPanDrag?: () => void;
 }) {
   const ref = useRef<MapView>(null);
-  const fitKey = fit ? fit.map((c) => `${c.latitude.toFixed(4)},${c.longitude.toFixed(4)}`).join('|') : '';
+  const [userInteracted, setUserInteracted] = useState(false);
+
+  // Derive stable fit key: either customFitKey, or if fit provided, stable endpoints
+  const fitKey = customFitKey ?? (fit && fit.length > 1
+    ? `${fit[0].latitude.toFixed(3)},${fit[0].longitude.toFixed(3)}|${fit[fit.length - 1].latitude.toFixed(3)},${fit[fit.length - 1].longitude.toFixed(3)}|${fit.length}`
+    : '');
+
+  const prevFitKey = useRef<string>('');
+  const prevCenterKey = useRef<string>('');
+
+  // Auto-fit to coordinates only when the fit route/stage actually changes
   useEffect(() => {
     if (fit && fit.length > 1) {
-      ref.current?.fitToCoordinates(fit, { edgePadding: { top: topPad, bottom: bottomPad, left: 50, right: 50 }, animated: true });
-    } else if (center) {
-      ref.current?.animateToRegion({ latitude: center.lat, longitude: center.lng, latitudeDelta: 0.025, longitudeDelta: 0.025 }, 500);
+      if (fitKey && fitKey !== prevFitKey.current) {
+        prevFitKey.current = fitKey;
+        // On transition to a new route/stage, reset manual interaction and fit route
+        setUserInteracted(false);
+        ref.current?.fitToCoordinates(fit, {
+          edgePadding: { top: topPad, bottom: bottomPad, left: 50, right: 50 },
+          animated: true,
+        });
+      }
+    } else {
+      prevFitKey.current = '';
     }
-  }, [fitKey, center?.lat, center?.lng]);
+  }, [fitKey, topPad, bottomPad]);
+
+  // Center coordinate handling when no fit bounding box is active
+  useEffect(() => {
+    if (!fit || fit.length <= 1) {
+      if (center) {
+        const centerKey = `${center.lat.toFixed(4)},${center.lng.toFixed(4)}`;
+        if (centerKey !== prevCenterKey.current) {
+          prevCenterKey.current = centerKey;
+          // Do not override user's manual zoom or pan
+          if (!userInteracted) {
+            ref.current?.animateToRegion(
+              { latitude: center.lat, longitude: center.lng, latitudeDelta: 0.025, longitudeDelta: 0.025 },
+              500
+            );
+          }
+        }
+      }
+    }
+  }, [center?.lat, center?.lng, userInteracted, fit]);
+
+  const handleRecenter = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setUserInteracted(false);
+    if (fit && fit.length > 1) {
+      ref.current?.fitToCoordinates(fit, {
+        edgePadding: { top: topPad, bottom: bottomPad, left: 50, right: 50 },
+        animated: true,
+      });
+    } else if (center) {
+      ref.current?.animateToRegion(
+        { latitude: center.lat, longitude: center.lng, latitudeDelta: 0.025, longitudeDelta: 0.025 },
+        500
+      );
+    }
+  };
+
   return (
-    <MapView
-      ref={ref} style={StyleSheet.absoluteFill} userInterfaceStyle="dark" showsCompass={false} showsPointsOfInterests={false}
-      initialRegion={{ latitude: center?.lat ?? 12.9716, longitude: center?.lng ?? 77.5946, latitudeDelta: 0.04, longitudeDelta: 0.04 }}
-    >
-      {children}
-    </MapView>
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <MapView
+        ref={ref}
+        style={StyleSheet.absoluteFill}
+        userInterfaceStyle="dark"
+        showsCompass={false}
+        showsPointsOfInterests={false}
+        initialRegion={{
+          latitude: center?.lat ?? 12.9716,
+          longitude: center?.lng ?? 77.5946,
+          latitudeDelta: 0.04,
+          longitudeDelta: 0.04,
+        }}
+        onTouchStart={() => {
+          if (!userInteracted) setUserInteracted(true);
+        }}
+        onPanDrag={() => {
+          if (!userInteracted) setUserInteracted(true);
+          onPanDrag?.();
+        }}
+        onRegionChangeComplete={(region, details) => {
+          if (details?.isGesture && !userInteracted) {
+            setUserInteracted(true);
+          }
+          onRegionChangeComplete?.(region);
+        }}
+      >
+        {children}
+      </MapView>
+
+      {/* Floating Re-center button: allows manual tracking while offering easy return to overview */}
+      {showRecenterButton && userInteracted && (Boolean(fit && fit.length > 1) || Boolean(center)) && (
+        <Pressable
+          onPress={handleRecenter}
+          style={({ pressed }) => [
+            styles.recenterBtn,
+            { bottom: bottomPad + 14, opacity: pressed ? 0.75 : 1, transform: [{ scale: pressed ? 0.95 : 1 }] },
+          ]}
+        >
+          <Ionicons name="locate" size={16} color={colors.cyan} />
+          <Text style={styles.recenterText}>Re-center</Text>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -329,4 +439,24 @@ const styles = StyleSheet.create({
   err: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(248,113,113,0.12)', padding: 10, borderRadius: radius.sm, marginVertical: 6 },
   pin: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
   car: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1B2540', borderWidth: 2, borderColor: '#7C5CFF', alignItems: 'center', justifyContent: 'center' },
+  recenterBtn: {
+    position: 'absolute',
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(14, 21, 38, 0.92)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadow,
+  },
+  recenterText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
 });

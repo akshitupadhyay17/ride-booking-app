@@ -78,6 +78,10 @@ export class ApiClient {
   autocomplete = (q: string, near?: { lat: number; lng: number }) =>
     this.get<{ items: Place[] }>(`/maps/autocomplete?q=${encodeURIComponent(q)}${near ? `&lat=${near.lat}&lng=${near.lng}` : ''}`);
   reverse = (lat: number, lng: number) => this.get<Place>(`/maps/reverse?lat=${lat}&lng=${lng}`);
+  route = (plat: number, plng: number, dlat: number, dlng: number) =>
+    this.get<{ distance_m: number; duration_s: number; polyline: [number, number][]; source: string }>(
+      `/maps/route?plat=${plat}&plng=${plng}&dlat=${dlat}&dlng=${dlng}`
+    );
 
   // ---- fare / rides ----
   estimate = (pickup: Place, drop: Place) => this.post<Quote>('/fares/estimate', { pickup, drop });

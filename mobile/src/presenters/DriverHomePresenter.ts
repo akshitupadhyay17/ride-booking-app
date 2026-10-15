@@ -36,6 +36,8 @@ export class DriverHomePresenter extends Presenter<State> {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private countTimer: ReturnType<typeof setInterval> | null = null;
   private polyIdx = 0;
+  private pickupPath: [number, number][] = [];
+  private pickupIdx = 0;
 
   constructor(svc: Services) {
     super({
@@ -130,6 +132,14 @@ export class DriverHomePresenter extends Presenter<State> {
     try {
       const ride = await this.svc.api.accept(o.ride_id);
       this.polyIdx = 0;
+      this.pickupIdx = 0;
+      this.pickupPath = [];
+      if (this.state.pos) {
+        try {
+          const rt = await this.svc.api.route(this.state.pos.lat, this.state.pos.lng, ride.pickup.lat, ride.pickup.lng);
+          if (rt?.polyline?.length) this.pickupPath = rt.polyline;
+        } catch {}
+      }
       this.set({ ride, offer: null, status: 'busy', busy: false, otp: '' });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) { this.set({ busy: false, offer: null, error: this.errorText(e) }); }
@@ -213,6 +223,25 @@ export class DriverHomePresenter extends Presenter<State> {
       return { lat: cur.lat, lng: cur.lng, heading: h };
     }
     if (ride.status === 'ACCEPTED' || ride.status === 'ARRIVING') {
+      if (this.pickupPath.length > 0) {
+        let budget = SIM_STEP_M, cur = pos, h = pos.heading;
+        while (budget > 0 && this.pickupIdx < this.pickupPath.length) {
+          const [lat, lng] = this.pickupPath[this.pickupIdx];
+          const d = distanceM(cur, { lat, lng });
+          if (d <= budget) {
+            budget -= d;
+            h = d > 1 ? bearing(cur, { lat, lng }) : h;
+            cur = { ...cur, lat, lng };
+            this.pickupIdx++;
+          } else {
+            const f = budget / d;
+            h = bearing(cur, { lat, lng });
+            cur = { ...cur, lat: cur.lat + (lat - cur.lat) * f, lng: cur.lng + (lng - cur.lng) * f };
+            budget = 0;
+          }
+        }
+        return { lat: cur.lat, lng: cur.lng, heading: h };
+      }
       const m = move(ride.pickup, SIM_STEP_M);
       return { lat: m.lat, lng: m.lng, heading: m.heading };
     }

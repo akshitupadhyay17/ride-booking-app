@@ -36,13 +36,28 @@ export function RiderHomeView({ presenter: p, onSwitchMode }: Props) {
     return undefined;
   })();
 
+  const fitKey = (() => {
+    if (s.stage === 'quote' && s.quote) return `quote-${s.quote.quote_id}`;
+    if (s.stage === 'active' && s.ride) return `ride-${s.ride.id}-${s.ride.status}`;
+    return undefined;
+  })();
+
   return (
     <View style={{ flex: 1 }}>
-      <MapCanvas center={s.focus} fit={fit} bottomPad={s.stage === 'quote' ? 460 : 340}>
+      <MapCanvas
+        center={s.focus}
+        fit={fit}
+        fitKey={fitKey}
+        bottomPad={s.stage === 'quote' ? 460 : s.stage === 'map_pick' ? 240 : 340}
+        showRecenterButton={s.stage !== 'map_pick'}
+        onRegionChangeComplete={s.stage === 'map_pick' ? (r) => p.onMapRegionChange(r) : undefined}
+      >
         {route(quoteRoute)}
         {(s.stage === 'idle' || s.stage === 'matching' || s.stage === 'quote') &&
           s.nearby.map((d) => <VehicleMarker key={d.id + d.lat} lat={d.lat} lng={d.lng} type={d.vehicle_type} />)}
-        {s.pickup && s.stage !== 'completed' && <PinMarker lat={s.pickup.lat} lng={s.pickup.lng} color={colors.success} icon="radio-button-on" />}
+        {s.pickup && s.stage !== 'completed' && s.stage !== 'map_pick' && (
+          <PinMarker lat={s.pickup.lat} lng={s.pickup.lng} color={colors.success} icon="radio-button-on" />
+        )}
         {s.stage === 'quote' && s.drop && <PinMarker lat={s.drop.lat} lng={s.drop.lng} color={colors.danger} icon="flag" />}
         {s.stage === 'active' && s.ride && <PinMarker lat={s.ride.drop.lat} lng={s.ride.drop.lng} color={colors.danger} icon="flag" />}
         {s.stage === 'active' && s.driverPos && (
@@ -50,23 +65,53 @@ export function RiderHomeView({ presenter: p, onSwitchMode }: Props) {
         )}
       </MapCanvas>
 
+      {/* Floating Center Pin for Manual Map Picking */}
+      {s.stage === 'map_pick' && (
+        <View pointerEvents="none" style={styles.centerPinWrapper}>
+          <View style={styles.centerPinTooltip}>
+            <Text style={styles.centerPinTooltipText}>
+              {s.mapPickTarget === 'pickup' ? 'Pick up here' : 'Drop off here'}
+            </Text>
+          </View>
+          <View style={[styles.centerPinHead, { backgroundColor: s.mapPickTarget === 'pickup' ? colors.success : colors.danger }]}>
+            <Ionicons name={s.mapPickTarget === 'pickup' ? 'radio-button-on' : 'flag'} size={20} color="#fff" />
+          </View>
+          <View style={styles.centerPinStem} />
+          <View style={styles.centerPinShadow} />
+        </View>
+      )}
+
       {/* top bar */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        {s.stage === 'quote' ? <IconButton name="arrow-back" onPress={() => p.back()} /> : (
+        {s.stage === 'quote' ? (
+          <IconButton name="arrow-back" onPress={() => p.back()} />
+        ) : s.stage === 'map_pick' ? (
+          <IconButton name="arrow-back" onPress={() => p.closeMapPicker()} />
+        ) : (
           <View style={styles.chip}><Ionicons name="location" size={14} color={colors.cyan} /><Text style={styles.chipText}>Bengaluru</Text></View>
         )}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {onSwitchMode && s.stage === 'idle' && (
-            <Pressable testID="switch-to-driver" onPress={() => onSwitchMode('driver')} style={styles.chip}>
-              <Ionicons name="speedometer-outline" size={14} color={colors.cyan} />
-              <Text style={styles.chipText}>Drive Mode</Text>
+          {s.stage === 'map_pick' ? (
+            <Pressable testID="recenter-map-picker" onPress={() => p.recenterMapPicker()} style={styles.chip}>
+              <Ionicons name="locate" size={16} color={colors.cyan} />
+              <Text style={styles.chipText}>Current GPS</Text>
             </Pressable>
+          ) : (
+            <>
+              {onSwitchMode && s.stage === 'idle' && (
+                <Pressable testID="switch-to-driver" onPress={() => onSwitchMode('driver')} style={styles.chip}>
+                  <Ionicons name="speedometer-outline" size={14} color={colors.cyan} />
+                  <Text style={styles.chipText}>Drive Mode</Text>
+                </Pressable>
+              )}
+              <View style={styles.chip}><Ionicons name="wallet-outline" size={14} color={colors.success} /><Text style={styles.chipText}>{rupees(s.balance)}</Text></View>
+            </>
           )}
-          <View style={styles.chip}><Ionicons name="wallet-outline" size={14} color={colors.success} /><Text style={styles.chipText}>{rupees(s.balance)}</Text></View>
         </View>
       </View>
 
       {s.stage === 'idle' && <IdleSheet p={p} s={s} />}
+      {s.stage === 'map_pick' && <MapPickSheet p={p} s={s} />}
       {s.stage === 'quote' && <QuoteSheet p={p} s={s} />}
       {s.stage === 'matching' && <MatchingSheet p={p} s={s} />}
       {s.stage === 'active' && s.ride && <ActiveSheet p={p} s={s} />}
@@ -77,23 +122,61 @@ export function RiderHomeView({ presenter: p, onSwitchMode }: Props) {
 
 type SP = { p: RiderHomePresenter; s: ReturnType<RiderHomePresenter['getState']> };
 
+function MapPickSheet({ p, s }: SP) {
+  const isPickup = s.mapPickTarget === 'pickup';
+  const name = s.mapPickPlace?.name || (s.mapPickLoading ? 'Pinning address…' : 'Pinned location');
+  const address = s.mapPickPlace?.address || (s.mapPickLoading ? 'Fetching street details…' : 'Move map to adjust');
+
+  return (
+    <Sheet collapsible={false} style={{ paddingBottom: 30 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <View style={[styles.dot, { backgroundColor: isPickup ? colors.success : colors.danger }]} />
+        <View style={{ flex: 1 }}>
+          <Text style={font.tiny}>{isPickup ? 'SELECTED PICKUP' : 'SELECTED DESTINATION'}</Text>
+          <Text style={[font.h3, { marginTop: 2 }]} numberOfLines={1}>{name}</Text>
+          <Text style={font.small} numberOfLines={2}>{address}</Text>
+        </View>
+        {s.mapPickLoading && <ActivityIndicator color={colors.cyan} size="small" />}
+      </View>
+      <Button
+        title={isPickup ? 'Confirm Pickup Location' : 'Confirm Destination'}
+        variant={isPickup ? 'success' : 'primary'}
+        onPress={() => p.confirmMapPick()}
+        disabled={s.mapPickLoading}
+        icon="checkmark"
+      />
+    </Sheet>
+  );
+}
+
 function IdleSheet({ p, s }: SP) {
   return (
     <Sheet>
-      <Text style={font.h2}>Where to?</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={font.h2}>Where to?</Text>
+        <Pressable testID="pick-on-map-drop" onPress={() => p.openMapPicker('drop')} style={styles.quickMapChip}>
+          <Ionicons name="map-outline" size={14} color={colors.cyan} />
+          <Text style={styles.quickMapChipText}>Set on map</Text>
+        </Pressable>
+      </View>
       <Pressable testID="where-to" onPress={() => p.openSearch('drop')} style={styles.search}>
         <Ionicons name="search" size={20} color={colors.cyan} />
         <Text style={{ color: colors.muted, fontSize: 16, marginLeft: 12 }}>Search destination in Bengaluru</Text>
       </Pressable>
-      <Pressable onPress={() => p.openSearch('pickup')} style={styles.pickupRow}>
-        <View style={styles.dot} />
-        <View style={{ flex: 1 }}>
-          <Text style={font.tiny}>PICKUP</Text>
-          <Text style={[font.body, { fontWeight: '600' }]} numberOfLines={1}>{s.pickup?.name ?? 'Locating…'}</Text>
-          <Text style={font.small} numberOfLines={1}>{s.pickup?.address}</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={18} color={colors.faint} />
-      </Pressable>
+      <View style={styles.pickupRow}>
+        <Pressable onPress={() => p.openSearch('pickup')} style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+          <View style={styles.dot} />
+          <View style={{ flex: 1 }}>
+            <Text style={font.tiny}>PICKUP</Text>
+            <Text style={[font.body, { fontWeight: '600' }]} numberOfLines={1}>{s.pickup?.name ?? 'Locating…'}</Text>
+            <Text style={font.small} numberOfLines={1}>{s.pickup?.address}</Text>
+          </View>
+        </Pressable>
+        <Pressable testID="pick-on-map-pickup" onPress={() => p.openMapPicker('pickup')} hitSlop={10} style={styles.pickupMapBtn}>
+          <Ionicons name="map-outline" size={18} color={colors.cyan} />
+          <Text style={styles.pickupMapBtnText}>Map</Text>
+        </Pressable>
+      </View>
       <NoticeText text={s.notice} onClose={() => p.clearMessages()} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }} contentContainerStyle={{ gap: 10 }}>
         {['Indiranagar', 'Koramangala', 'MG Road Metro', 'Whitefield (ITPL)', 'Kempegowda Airport'].map((n) => (
@@ -312,11 +395,19 @@ function SearchOverlay({ p, s }: SP) {
           {s.searching && <ActivityIndicator color={colors.cyan} />}
         </View>
         {s.searchTarget === 'pickup' && (
-          <Pressable onPress={() => p.useCurrentLocation()} style={styles.row}>
+          <Pressable testID="use-current-location" onPress={() => p.useCurrentLocation()} style={styles.row}>
             <View style={[styles.rowIcon, { backgroundColor: 'rgba(52,211,153,0.15)' }]}><Ionicons name="locate" size={18} color={colors.success} /></View>
             <Text style={[font.body, { fontWeight: '600' }]}>Use current location</Text>
           </Pressable>
         )}
+        <Pressable testID="set-on-map-row" onPress={() => p.openMapPicker(s.searchTarget)} style={styles.row}>
+          <View style={[styles.rowIcon, { backgroundColor: 'rgba(124,92,255,0.15)' }]}><Ionicons name="map-outline" size={18} color={colors.primary} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={[font.body, { fontWeight: '600' }]}>Set location on map</Text>
+            <Text style={font.small}>Drag pin to exact {s.searchTarget === 'pickup' ? 'pickup point' : 'destination'}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.faint} />
+        </Pressable>
       </View>
       <FlatList
         data={s.results} keyboardShouldPersistTaps="handled" keyExtractor={(i, idx) => `${i.lat}-${i.lng}-${idx}`}
@@ -342,6 +433,16 @@ const styles = StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, height: 58, borderRadius: radius.md, paddingHorizontal: 16, marginTop: 12, borderWidth: 1, borderColor: colors.border },
   pickupRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, marginTop: 4 },
   dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.success, marginRight: 14, borderWidth: 3, borderColor: 'rgba(52,211,153,0.3)' },
+  quickMapChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(34,211,238,0.12)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(34,211,238,0.3)' },
+  quickMapChipText: { color: colors.cyan, fontSize: 12, fontWeight: '700' },
+  pickupMapBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.card, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: colors.border },
+  pickupMapBtnText: { color: colors.cyan, fontSize: 12, fontWeight: '600' },
+  centerPinWrapper: { position: 'absolute', top: 0, bottom: 130, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' },
+  centerPinTooltip: { backgroundColor: '#0F172A', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: colors.border, marginBottom: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 5, elevation: 6 },
+  centerPinTooltipText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  centerPinHead: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 6, elevation: 8 },
+  centerPinStem: { width: 4, height: 12, backgroundColor: '#fff', borderRadius: 2 },
+  centerPinShadow: { width: 14, height: 6, borderRadius: 3, backgroundColor: 'rgba(0,0,0,0.5)', marginTop: 2 },
   quick: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.card, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: colors.border },
   quickText: { color: colors.text, fontSize: 13 },
   option: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: radius.md, borderWidth: 1.5, borderColor: 'transparent', marginBottom: 6 },

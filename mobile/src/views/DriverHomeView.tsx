@@ -40,9 +40,11 @@ export function DriverHomeView({ presenter: p, onSwitchMode }: Props) {
   const target = r ? (r.status === 'IN_PROGRESS' ? r.drop : r.pickup) : null;
   const fit = r && s.pos && target ? [{ latitude: s.pos.lat, longitude: s.pos.lng }, { latitude: target.lat, longitude: target.lng }] : undefined;
 
+  const fitKey = r ? `driver-ride-${r.id}-${r.status}` : undefined;
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <MapCanvas center={s.pos} fit={fit} bottomPad={380}>
+      <MapCanvas center={s.pos} fit={fit} fitKey={fitKey} bottomPad={380}>
         {r && route(r.polyline)}
         {r && <PinMarker lat={r.pickup.lat} lng={r.pickup.lng} color={colors.success} icon="radio-button-on" />}
         {r && <PinMarker lat={r.drop.lat} lng={r.drop.lng} color={colors.danger} icon="flag" />}

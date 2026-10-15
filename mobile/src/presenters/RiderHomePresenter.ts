@@ -1,10 +1,10 @@
 import * as Haptics from 'expo-haptics';
 import { Presenter, Services } from './Presenter';
 import { getCurrentFix } from '../model/location';
-import { POPULAR_PLACES } from '../model/config';
+import { CITY_CENTER, POPULAR_PLACES } from '../model/config';
 import type { NearbyDriver, Place, Quote, Ride, ServerEvent } from '../model/types';
 
-export type RiderStage = 'idle' | 'search' | 'quote' | 'matching' | 'active' | 'completed';
+export type RiderStage = 'idle' | 'search' | 'map_pick' | 'quote' | 'matching' | 'active' | 'completed';
 
 interface State {
   stage: RiderStage;
@@ -14,6 +14,10 @@ interface State {
   query: string;
   results: Place[];
   searching: boolean;
+  mapPickTarget: 'pickup' | 'drop';
+  mapPickCoord: { lat: number; lng: number } | null;
+  mapPickPlace: Place | null;
+  mapPickLoading: boolean;
   quote: Quote | null;
   vehicle: string | null;
   payment: 'wallet' | 'cash';
@@ -37,11 +41,13 @@ const ACTIVE = ['ACCEPTED', 'ARRIVING', 'ARRIVED', 'IN_PROGRESS'];
 export class RiderHomePresenter extends Presenter<State> {
   private started = false;
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private reverseTimer: ReturnType<typeof setTimeout> | null = null;
   private nearbyTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(svc: Services) {
     super({
       stage: 'idle', pickup: null, drop: null, searchTarget: 'drop', query: '', results: [], searching: false,
+      mapPickTarget: 'pickup', mapPickCoord: null, mapPickPlace: null, mapPickLoading: false,
       quote: null, vehicle: null, payment: 'wallet', ride: null, driverPos: null, etaSec: null, nearby: [],
       loading: false, error: null, notice: null, balance: 0, stars: 5, tags: [], ratingSubmitted: false,
       gpsIsReal: false, focus: null,
@@ -119,6 +125,91 @@ export class RiderHomePresenter extends Presenter<State> {
   async selectPlace(p: Place) {
     if (this.state.searchTarget === 'pickup') this.set({ pickup: p, focus: { lat: p.lat, lng: p.lng } });
     else this.set({ drop: p });
+    this.afterPlaceChosen();
+  }
+
+  // ---------- map picker ----------
+  async openMapPicker(target: 'pickup' | 'drop') {
+    const existing = target === 'pickup' ? this.state.pickup : (this.state.drop ?? this.state.pickup);
+    const coord = existing ? { lat: existing.lat, lng: existing.lng } : (this.state.focus ?? CITY_CENTER);
+    this.set({
+      stage: 'map_pick',
+      mapPickTarget: target,
+      mapPickCoord: coord,
+      mapPickPlace: existing,
+      mapPickLoading: false,
+      focus: { lat: coord.lat, lng: coord.lng },
+    });
+    if (!existing) {
+      this.reverseGeocodeMapPick(coord.lat, coord.lng);
+    }
+  }
+
+  onMapRegionChange(region: { latitude: number; longitude: number }) {
+    if (this.state.stage !== 'map_pick') return;
+    this.set({
+      mapPickCoord: { lat: region.latitude, lng: region.longitude },
+      mapPickLoading: true,
+    });
+    if (this.reverseTimer) clearTimeout(this.reverseTimer);
+    this.reverseTimer = setTimeout(() => {
+      this.reverseGeocodeMapPick(region.latitude, region.longitude);
+    }, 400);
+  }
+
+  private async reverseGeocodeMapPick(lat: number, lng: number) {
+    try {
+      const p = await this.svc.api.reverse(lat, lng);
+      if (this.state.stage === 'map_pick') {
+        this.set({
+          mapPickPlace: { lat, lng, name: p.name || 'Pinned location', address: p.address },
+          mapPickLoading: false,
+        });
+      }
+    } catch {
+      if (this.state.stage === 'map_pick') {
+        this.set({
+          mapPickPlace: { lat, lng, name: 'Pinned location', address: `${lat.toFixed(4)}, ${lng.toFixed(4)}, Bengaluru` },
+          mapPickLoading: false,
+        });
+      }
+    }
+  }
+
+  async recenterMapPicker() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const fix = await getCurrentFix();
+    this.set({
+      focus: { lat: fix.lat, lng: fix.lng },
+      mapPickCoord: { lat: fix.lat, lng: fix.lng },
+      mapPickLoading: true,
+    });
+    this.reverseGeocodeMapPick(fix.lat, fix.lng);
+  }
+
+  closeMapPicker() {
+    if (this.state.pickup && this.state.drop) {
+      this.set({ stage: 'quote' });
+    } else {
+      this.set({ stage: 'idle' });
+    }
+  }
+
+  confirmMapPick() {
+    const { mapPickCoord, mapPickPlace, mapPickTarget } = this.state;
+    if (!mapPickCoord) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    const chosen: Place = mapPickPlace ?? {
+      lat: mapPickCoord.lat,
+      lng: mapPickCoord.lng,
+      name: mapPickTarget === 'pickup' ? 'Selected pickup' : 'Selected destination',
+      address: `${mapPickCoord.lat.toFixed(4)}, ${mapPickCoord.lng.toFixed(4)}, Bengaluru`,
+    };
+    if (mapPickTarget === 'pickup') {
+      this.set({ pickup: chosen, focus: { lat: chosen.lat, lng: chosen.lng } });
+    } else {
+      this.set({ drop: chosen });
+    }
     this.afterPlaceChosen();
   }
 

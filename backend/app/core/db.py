@@ -28,12 +28,24 @@ def get_engine():
     return _engine
 
 
-def create_schema():
+def create_schema(max_retries: int = 15, delay_s: float = 2.0):
+    import time
+    import logging
     from app.models import entities  # noqa: F401  (register tables)
 
+    log = logging.getLogger("app.db")
     engine = get_engine()
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+    for attempt in range(max_retries):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            log.warning("DB not ready yet (attempt %d/%d): %s. Retrying in %ss...", attempt + 1, max_retries, e, delay_s)
+            time.sleep(delay_s)
+
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
         # Partial, geography expression index: only online drivers are indexed.
